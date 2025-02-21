@@ -9,6 +9,7 @@ from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import psycopg2
 from datetime import timedelta
+# import logger
 from logScript import logger
 
 load_dotenv(dotenv_path='.env')
@@ -43,7 +44,7 @@ def save_in_db(data):
         # SQL-запрос для вставки данных
         insert_query = """
             INSERT INTO irrelevant_debtor (
-                дата, ссылка_сообщения, Полное_имя, ссылка_ЕФРСБ, Инн_Должника
+                дата, ссылка_сообщения, Полное_имя, должник_ссылка_ЕФРСБ, Инн_Должника
             ) VALUES (
                 %s, %s, %s, %s, %s
             )
@@ -79,6 +80,33 @@ def get_dates_range(start_date, end_date):
         current_date += timedelta(days=1)
     return dates
 
+def choose_act_type(driver, act_type):
+    try:
+        select_element = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "ctl00_cphBody_ddlCourtDecisionType")))
+        select = Select(select_element)
+        select.select_by_visible_text(act_type)
+        logger.info(f'Выбрал тип акта: {act_type}')
+    except Exception as e:
+        logger.error(f'не получилось выбрать тип акта: {e}')
+
+def select_date_range(driver, current_date):
+    try:
+        # нужно в интерфейсе принимать даты которые пользователь введет
+        begin_date = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "ctl00_cphBody_cldrBeginDate_tbSelectedDate")))
+        begin_date.clear()
+        begin_date.send_keys(current_date.strftime("%d.%m.%Y"))
+
+        time.sleep(2)
+
+        end_date = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "ctl00_cphBody_cldrEndDate_tbSelectedDate")))
+        end_date.clear()
+        end_date.send_keys(current_date.strftime("%d.%m.%Y"))
+    except Exception as e:
+        logger.error(f'не получилось выбрать дату: {e}')
+
 def message_type_selecter(driver, current_date, act_type):
     try:
         link = "https://old.bankrot.fedresurs.ru/Messages.aspx"
@@ -87,6 +115,7 @@ def message_type_selecter(driver, current_date, act_type):
             driver.get(link)
         except WebDriverException as e:
             logger.error(f'не получилось открыть ссылку в message_type_selecter: {e}')
+            return None
 
         search_message_type = WebDriverWait(driver, 10).until(EC.presence_of_element_located(
             (By.ID, 'ctl00_cphBody_mdsMessageType_tbSelectedText')))
@@ -111,30 +140,9 @@ def message_type_selecter(driver, current_date, act_type):
         driver.switch_to.default_content()
         logger.info('переключился на основную окошку ')
 
-        # Ожидание и выбор нужного типа сообщения
-        # нужно в интерфесе выбирать один из типов актов
-        select_element = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "ctl00_cphBody_ddlCourtDecisionType")))
-        select = Select(select_element)
-        select.select_by_visible_text(act_type)
-        logger.info(f'Выбрал тип акта: {act_type}')
+        choose_act_type(driver, act_type)
 
-        time.sleep(3)
-
-        # нужно в интерфейсе принимать даты которые пользователь введет
-        begin_date = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "ctl00_cphBody_cldrBeginDate_tbSelectedDate")))
-        begin_date.clear()
-        begin_date.send_keys(current_date.strftime("%d.%m.%Y"))
-
-        time.sleep(2)
-
-        end_date = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "ctl00_cphBody_cldrEndDate_tbSelectedDate")))
-        end_date.clear()
-        end_date.send_keys(current_date.strftime("%d.%m.%Y"))
-
-        time.sleep(2)
+        select_date_range(driver, current_date)
 
         # Ожидание и клик по кнопке "Поиск"
         search_button = WebDriverWait(driver, 10).until(
@@ -142,14 +150,11 @@ def message_type_selecter(driver, current_date, act_type):
         search_button.click()
         logger.info('кликнул на кнопуку поиск в главном окошке ')
 
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-        return soup
     except Exception as e:
         logger.error(f'Не получилось выбрать тип акта: {e}')
         return None
 
-def message_parsing(driver, messages):
+def     message_parsing(driver, messages):
     try:
         driver.execute_script(f"window.open('');")
 
@@ -186,8 +191,8 @@ def message_parsing(driver, messages):
                         data[field] = value
 
             # Данные о должнике
-            last_name, first_name, middle_name = None, None, None
-            full_name = None
+            debtor_fl_name = None
+            debtor_ul_name = None
             debtor_section = soup.find('div', string="Должник")
             if debtor_section:
                 debtor_table = debtor_section.find_next('table')
@@ -199,30 +204,24 @@ def message_parsing(driver, messages):
                             field = cells[0].text.strip()
                             value = cells[1].text.strip()
 
-                            if "Фамилия" in field:
-                                last_name = value
-                            elif "Имя" in field:
-                                first_name = value
-                            elif "Отчество" in field:
-                                middle_name = value
+                            if "ФИО должника" in field:
+                                debtor_fl_name = value
                             elif "Наименование должника" in field:
-                                full_name= value
+                                debtor_ul_name= value
                             else:
                                 data[field] = value
-                    # Объединяем Фамилию, Имя и Отчество в один столбец
-                    if any(v is None for v in [last_name, first_name, middle_name]):
-                        data["Полное_имя"] = full_name
+
+                    if debtor_fl_name is None:
+                        data["Полное_имя"] = debtor_ul_name
                     else:
-                        data["Полное_имя"] = " ".join(filter(None, [last_name, first_name, middle_name]))
+                        data["Полное_имя"] = debtor_fl_name
 
                     logger.info(f"Полное имя: {data['Полное_имя']}")
 
             data.update(act)
             logger.info(f'сообщение: {data}')
-            # отправка в базу сразу
+
             save_in_db(data)
-
-
     except Exception as e:
         logger.error(f'Не удалось спарсить содержимое сообщения: {e}')
         return None
@@ -236,20 +235,24 @@ def message_parsing(driver, messages):
                 driver.close()
             driver.switch_to.window(driver.window_handles[0])
 
-def from_end_parsing(driver, soup):
+def from_end_parsing(driver):
     try:
         visited_pages = set()
         list_of_messages = []
 
         while True:
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
             table = soup.find('table', class_='bank')
             if table:
+                logger.info(f'нашел table')
                 # Парсим строки
                 rows = table.find_all('tr')
-
+                logger.info(f'нашел tr')
                 for row in rows:
                     cells = row.find_all("td")
-                    if len(cells) > 5:
+                    logger.info(f'нашел td. количество ячеек: {len(cells)}')
+
+                    if len(cells) == 5:
                         # Извлекаем данные из ячеек
                         date = cells[0].get_text(strip=True)
                         debtor = cells[2].get_text(strip=True)
@@ -262,15 +265,19 @@ def from_end_parsing(driver, soup):
                             "должник_ссылка": f"https://old.bankrot.fedresurs.ru{link_debtor}" if link_debtor else "Нет ссылки",
                             "сообщение_ссылка": f"https://old.bankrot.fedresurs.ru{link_messeges}" if link_messeges else "Нет ссылки",
                         }
+                        logger.info(f'лицо сообщения: {new_messages}')
 
                         list_of_messages.append(new_messages)
+                        continue
 
+                logger.info(f'начинаю пагинацию')
                 # Если это строка с пагинацией
-                pager_table = soup.find('table', class_='pager')
-                if not pager_table:
+                pager_tr = soup.find('tr', class_='pager')
+                logger.info(f'нашел pager_tr')
+                if not pager_tr:
                     logger.info("Таблица пагинации не найдена, завершаем парсинг")
                     break
-
+                pager_table = pager_tr.find_next('table')
                 page_elements = pager_table.find_all('a', href=True)
                 if not page_elements:
                     logger.info("Ссылки пагинации отсутствуют, завершаем парсинг")
@@ -294,7 +301,6 @@ def from_end_parsing(driver, soup):
                     # Проверяем, начинается ли href с нужного JavaScript
                     if "javascript:__doPostBack" in href:
                         try:
-                            logger.info(f"Переход на страницу: {page_action}")
                             script = """
                                     var theForm = document.forms['aspnetForm'];
                                     if (!theForm) {
@@ -308,22 +314,16 @@ def from_end_parsing(driver, soup):
                                     """
                             logger.info(f"Клик по элементу пагинации: {page_action}")
                             driver.execute_script(script, 'ctl00$cphBody$gvMessages', page_action)
-
-                            # element.click()  # Кликаем по элементу
-                            WebDriverWait(driver, 10).until(
-                                EC.presence_of_element_located((By.TAG_NAME, 'html'))
-                            )
+                            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, 'html')))
                             time.sleep(3)  # Ожидание загрузки новой страницы
-
-                            # Обновляем soup для новой страницы и продолжаем обработку
-                            soup = BeautifulSoup(driver.page_source, 'html.parser')
-
                             visited_pages.add(page_action)
                             break
                         except Exception as e:
                             logger.error(f"Ошибка при клике на элемент пагинации: {e}")
                             return
-
+                else:
+                    logger.info("Дополнительных страниц для перехода не найдено")
+                    break
             else:
                 logger.info(f'не осталось актов ')
                 break
