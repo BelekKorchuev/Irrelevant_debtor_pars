@@ -44,14 +44,14 @@ def save_in_db(data):
         # SQL-запрос для вставки данных
         insert_query = """
             INSERT INTO irrelevant_debtor (
-                дата, ссылка_сообщения, Полное_имя, должник_ссылка_ЕФРСБ, Инн_Должника
+                дата, ссылка_сообщения, Полное_имя, должник_ссылка_ЕФРСБ, Инн_Должника, тип_акта
             ) VALUES (
-                %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s
             )
         """
 
         values = (
-            data.get('дата'), data.get('сообщение_ссылка'), data.get('Полное_имя'), data.get('должник_ссылка'), data.get('ИНН')
+            data.get('дата'), data.get('сообщение_ссылка'), data.get('Полное_имя'), data.get('должник_ссылка'), data.get('ИНН'), data.get('тип_акта')
         )
 
         # Выполняем запрос с передачей данных из словаря
@@ -154,7 +154,7 @@ def message_type_selecter(driver, current_date, act_type):
         logger.error(f'Не получилось выбрать тип акта: {e}')
         return None
 
-def     message_parsing(driver, messages):
+def     message_parsing(driver, messages, act_type):
     try:
         driver.execute_script(f"window.open('');")
 
@@ -219,6 +219,7 @@ def     message_parsing(driver, messages):
                     logger.info(f"Полное имя: {data['Полное_имя']}")
 
             data.update(act)
+            data['тип_акта'] = act_type
             logger.info(f'сообщение: {data}')
 
             save_in_db(data)

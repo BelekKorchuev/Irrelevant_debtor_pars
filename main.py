@@ -151,7 +151,7 @@ class ParsingApp:
                     time.sleep(4)
                     list_dic = from_end_parsing(self.driver)
                     if list_dic:
-                        message_parsing(self.driver, list_dic)
+                        message_parsing(self.driver, list_dic, act_type)
                     logger.info(f"Парсинг завершен для {current_date.strftime('%d.%m.%Y')}")
                 except Exception as e:
                     logger.error(f"Ошибка: {e}")
