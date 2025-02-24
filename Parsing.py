@@ -225,7 +225,7 @@ def     message_parsing(driver, messages, act_type):
             save_in_db(data)
     except Exception as e:
         logger.error(f'Не удалось спарсить содержимое сообщения: {e}')
-        return None
+        return False
     finally:
         if len(driver.window_handles) == 2:
             driver.close()

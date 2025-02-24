@@ -124,6 +124,7 @@ class ParsingApp:
 
     def run_parsing(self, start_date, end_date, act_type):
         try:
+            missing_data = []
             try:
                 self.driver = create_webdriver()
             except Exception as e:
@@ -150,8 +151,15 @@ class ParsingApp:
                     message_type_selecter(self.driver, current_date, act_type)
                     time.sleep(4)
                     list_dic = from_end_parsing(self.driver)
+                    if list_dic is None:
+                        logger.error(f'Текушая дата: {current_date}, причина: ошибка в from_end_parsing, акт: {act_type}')
+                        continue
                     if list_dic:
-                        message_parsing(self.driver, list_dic, act_type)
+                        data = message_parsing(self.driver, list_dic, act_type)
+                        if data is False:
+                            logger.error(f'Текушая дата: {current_date}, причина: ошибка в message_parsing, акт: {act_type}')
+                            continue
+
                     logger.info(f"Парсинг завершен для {current_date.strftime('%d.%m.%Y')}")
                 except Exception as e:
                     logger.error(f"Ошибка: {e}")
